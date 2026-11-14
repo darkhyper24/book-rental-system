@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BookRental.BusinessLogicLayer/BookRental.BusinessLogicLayer.csproj" />
+    <Project Path="src/BookRental.DataAccessLayer/BookRental.DataAccessLayer.csproj" />
+    <Project Path="src/BookRental.PresentationLayer/BookRental.PresentationLayer.csproj" />
+  </Folder>
+</Solution>
