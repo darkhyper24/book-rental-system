@@ -16,5 +16,9 @@ public class RentConfiguration : IEntityTypeConfiguration<Rent>
             .WithMany()
             .HasForeignKey(rent => rent.UserId)
             .OnDelete(DeleteBehavior.Cascade);
+        builder.HasIndex(rent => rent.UserId);
+        builder.HasIndex(rent => new { rent.UserId, rent.BookId })
+            .IsUnique()
+            .HasFilter("\"Status\" = 0");
     }
 }

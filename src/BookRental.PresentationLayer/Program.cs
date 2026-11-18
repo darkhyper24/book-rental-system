@@ -4,24 +4,45 @@ DotNetEnv.Env.TraversePath().Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
-
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-builder.Services.AddControllers();
-builder.Services.AddOpenApi();
+builder.Services.AddIdentityServices();
+
+builder.Services.AddJwtAuthentication(builder.Configuration);
+
+builder.Services.AddApplicationServices();
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
-
 app.UseHttpsRedirection();
+app.UseAuthentication();
 
-app.UseAuthorization();
+app.Map("/api/user", branch =>
+{
+    branch.UseRequireRole(RoleNames.User);
+    branch.UseRouting();
+    branch.UseEndpoints(_ => { });
+});
 
-app.MapControllers();
+app.Map("/api/admin", branch =>
+{
+    branch.UseRequireRole(RoleNames.Admin);
+    branch.UseRouting();
+    branch.UseEndpoints(_ => { });
+});
+
+app.Map("/api/superadmin", branch =>
+{
+    branch.UseRequireRole(RoleNames.SuperAdmin);
+    branch.UseRouting();
+    branch.UseEndpoints(_ => { });
+});
+
+app.MapAuthEndpoints();
+app.MapBookEndpoints();
+app.MapUserEndpoints();
+app.MapAdminEndpoints();
+app.MapSuperAdminEndpoints();
 
 app.Run();

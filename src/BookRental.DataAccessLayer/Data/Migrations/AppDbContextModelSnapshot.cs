@@ -277,6 +277,10 @@ namespace BookRental.DataAccessLayer.Data.Migrations
 
                     b.HasIndex("UserId");
 
+                    b.HasIndex("UserId", "BookId")
+                        .IsUnique()
+                        .HasFilter("\"Status\" = 0");
+
                     b.ToTable("Rents");
                 });
 
