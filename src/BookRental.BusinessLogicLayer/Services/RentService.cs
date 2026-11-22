@@ -1,9 +1,9 @@
 public class RentService
 {
-    private readonly RentRepository _rentRepository;
-    private readonly BookRepository _bookRepository;
+    private readonly IRentRepository _rentRepository;
+    private readonly IBookRepository _bookRepository;
 
-    public RentService(RentRepository rentRepository, BookRepository bookRepository)
+    public RentService(IRentRepository rentRepository, IBookRepository bookRepository)
     {
         _rentRepository = rentRepository;
         _bookRepository = bookRepository;

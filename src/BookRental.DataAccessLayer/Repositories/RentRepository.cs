@@ -8,7 +8,7 @@ public enum ApproveResult
     NoCopiesLeft
 }
 
-public class RentRepository
+public class RentRepository : IRentRepository 
 {
     private readonly AppDbContext _context;
 

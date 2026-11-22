@@ -1,8 +1,8 @@
 public class BookService
 {
-    private readonly BookRepository _bookRepository;
+    private readonly IBookRepository _bookRepository;
 
-    public BookService(BookRepository bookRepository)
+    public BookService(IBookRepository bookRepository)
     {
         _bookRepository = bookRepository;
     }

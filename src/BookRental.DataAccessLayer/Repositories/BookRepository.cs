@@ -1,12 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 
-public class BookWithPendingCount
+public class BookWithPendingCount 
 {
     public Book? Book { get; set; }
     public int PendingCount { get; set; }
 }
 
-public class BookRepository
+public class BookRepository: IBookRepository
 {
     private readonly AppDbContext _context;
 

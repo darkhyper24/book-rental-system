@@ -4,9 +4,9 @@ public static class ServiceCollectionExtensions
     {
         services.AddScoped<TokenService>();
         services.AddScoped<AuthService>();
-        services.AddScoped<BookRepository>();
+        services.AddScoped<IBookRepository,BookRepository>();
         services.AddScoped<BookService>();
-        services.AddScoped<RentRepository>();
+        services.AddScoped<IRentRepository,RentRepository>();
         services.AddScoped<RentService>();
         services.AddValidation();
 
