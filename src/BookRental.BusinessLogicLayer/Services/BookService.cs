@@ -1,4 +1,4 @@
-public class BookService
+public class BookService : IBookService 
 {
     private readonly IBookRepository _bookRepository;
 

@@ -1,4 +1,4 @@
-public class RentService
+public class RentService : IRentService
 {
     private readonly IRentRepository _rentRepository;
     private readonly IBookRepository _bookRepository;

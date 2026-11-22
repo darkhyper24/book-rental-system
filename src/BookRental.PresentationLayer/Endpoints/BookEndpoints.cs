@@ -7,7 +7,7 @@ public static class BookEndpoints
         group.MapGet("/", ListBooks);
     }
 
-    private static async Task<IResult> ListBooks(BookService bookService)
+    private static async Task<IResult> ListBooks(IBookService bookService)
     {
         var books = await bookService.GetAllBooksAsync();
         return Results.Ok(books);

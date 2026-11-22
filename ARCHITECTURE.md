@@ -13,7 +13,7 @@ The solution (`BookRental.slnx`) has three projects. Each layer may only referen
 ```
 ┌──────────────────────────────────────────────┐
 │ BookRental.PresentationLayer   (Web API)     │  HTTP: routes, auth, status codes
-│   references ↓ BusinessLogicLayer, ↓ DAL     │  (DAL reference only for DI setup in Program.cs)
+│   references ↓ BusinessLogicLayer, ↓ DAL     │  (DAL reference only for DI setup and role constants)
 ├──────────────────────────────────────────────┤
 │ BookRental.BusinessLogicLayer  (class lib)   │  Business rules, DTOs, token creation
 │   references ↓ DataAccessLayer               │
@@ -63,7 +63,7 @@ book-rental-system/
     │   │   ├── Auth/    RegisterDto, LoginDto, CreateAdminDto, AuthResponseDto
     │   │   ├── Books/   CreateBookDto, BookDto
     │   │   └── Rents/   PendingRentDto, MyRentDto
-    │   ├── Services/    AuthService, TokenService, BookService, RentService
+    │   ├── Services/    AuthService, TokenService, IBookService + BookService, IRentService + RentService
     │   └── Settings/    JwtSettings
     │
     └── BookRental.DataAccessLayer/
@@ -73,7 +73,7 @@ book-rental-system/
         │   ├── AppDbContext.cs
         │   ├── Configurations/   ApplicationUserConfiguration, BookConfiguration, RentConfiguration
         │   └── Migrations/
-        └── Repositories/ BookRepository, RentRepository
+        └── Repositories/ IBookRepository + BookRepository, IRentRepository + RentRepository
 ```
 
 ---
@@ -86,17 +86,17 @@ Every request passes through the same stages, in this order. Each stage can stop
 
 | # | Stage | Where | What it does | Can stop with |
 |---|---|---|---|---|
-| 1 | Routing | Added automatically by `WebApplication` at the start of the pipeline | Matches method + path against the registered endpoints (full paths, e.g. `POST /api/admin/books`) | **404** no endpoint matches |
+| 1 | Routing | Added automatically by `WebApplication` at the start of the pipeline | Matches method + path against the registered endpoints (full paths, e.g. `POST /api/admin/books`) | **404** no endpoint matches (in a protected area the gateway answers **401** / **403** first), **405** wrong method |
 | 2 | `UseHttpsRedirection` | `Program.cs` | Redirects HTTP to HTTPS when an HTTPS port is configured (inactive on the `http` launch profile) | 307 redirect |
 | 3 | `UseAuthentication` | `Program.cs` | Reads `Authorization: Bearer <jwt>`, validates signature, lifetime, issuer and audience, and builds `HttpContext.User` from the claims. A missing or invalid token leaves an anonymous user (it does not reject here) | — |
 | 4 | `app.Map` gateway | `Program.cs` + `Middleware/RequireRoleMiddleware.cs` | Only for `/api/user`, `/api/admin`, `/api/superadmin`: checks `HttpContext.User` against the area's allowed role | **401** not logged in, **403** wrong role |
 | 5 | Endpoint execution | `UseEndpoints` (inside the branch) or the end of the main pipeline (public areas) | Runs the matched endpoint | — |
-| 6 | Parameter binding | Minimal APIs | Fills the handler's parameters: DTO from the JSON body, `Guid` ids from the route, `ClaimsPrincipal` from `HttpContext.User`, services (`AuthService`, `RentService`, …) from dependency injection | **400** malformed JSON / invalid route value |
+| 6 | Parameter binding | Minimal APIs | Fills the handler's parameters: DTO from the JSON body, `Guid` ids from the route, `ClaimsPrincipal` from `HttpContext.User`, services (`AuthService`, `IBookService`, `IRentService`) from dependency injection | **400** malformed JSON (an id that is not a GUID never gets here: the `:guid` route constraint gives **404**) |
 | 7 | DTO validation | `AddValidation()` | Runs the DataAnnotations on the request DTO (`[Required]`, `[EmailAddress]`, `[Range]`, …) | **400** `ValidationProblem` |
 | 8 | Handler | `Endpoints/*.cs` | Calls one service method | — |
 | 9 | Service | `BusinessLogicLayer/Services` | Applies the business rules, maps DTO → entity | returns errors (see 3.2) |
 | 10 | Repository | `DataAccessLayer/Repositories` (Identity's `UserManager` for users) | Runs EF Core queries/commands | — |
-| 11 | Database | PostgreSQL | Executes SQL; constraints (unique indexes) are the last line of defense | unique violation → handled as an error by the repository |
+| 11 | Database | PostgreSQL | Executes SQL; constraints (unique indexes) are the last line of defense | unique violation → handled by `TryAddRentAsync` for rents; not caught for books (**500**, see section 8) |
 
 ### 3.2 Response flow (outbound)
 
@@ -105,11 +105,11 @@ The answer travels back through the same layers in reverse, each layer changing 
 | # | Layer | Receives | Hands back |
 |---|---|---|---|
 | 1 | Database → Repository | Rows | **Entities** (`Book`, `Rent`, `ApplicationUser`), or counts / booleans / rows-changed numbers for checks and atomic updates |
-| 2 | Repository → Service | Entities, booleans, `ApproveResult` | **DTOs** for queries (`BookDto`, `PendingRentDto`, `MyRentDto`, `AuthResponseDto`), or a **`List<string>` of errors** for commands (empty list = success). Login returns `AuthResponseDto?` (`null` = invalid credentials) |
+| 2 | Repository → Service | Entities, `BookWithPendingCount`, booleans, `ApproveResult` | **DTOs** for queries (`BookDto`, `PendingRentDto`, `MyRentDto`, `AuthResponseDto`), or a **`List<string>` of errors** for commands (empty list = success). Login returns `AuthResponseDto?` (`null` = invalid credentials) |
 | 3 | Service → Handler | DTOs / error list / `null` | An **`IResult`**: `Results.Ok(dto)`, `Results.Created()`, `Results.BadRequest(errors)`, `Results.Unauthorized()` |
 | 4 | Handler → Client | `IResult` | ASP.NET serializes the body to **JSON** (property names in camelCase, e.g. `copiesAvailable`) and writes the status code |
 
-Responses that never reach a handler come from earlier stages: **404** (routing), **401/403** (gateway, with `WWW-Authenticate: Bearer`), **400** `ValidationProblem` (validation).
+Responses that never reach a handler come from earlier stages: **404** / **405** (routing), **401/403** (gateway, with `WWW-Authenticate: Bearer`), **400** `ValidationProblem` (validation).
 
 | Outcome | Status | Body |
 |---|---|---|
@@ -120,7 +120,9 @@ Responses that never reach a handler come from earlier stages: **404** (routing)
 | Wrong credentials | 401 | empty |
 | No / invalid token | 401 | empty, `WWW-Authenticate: Bearer` header |
 | Wrong role | 403 | empty |
-| Unknown route | 404 | empty |
+| Unknown route or non-GUID id | 404 (in a protected area, only after the gateway lets the caller through) | empty |
+| Wrong method | 405 | empty |
+| Unhandled exception | 500 | empty (exception details in Development) |
 
 Entities never appear in a response: the service maps them to DTOs, so fields like `PasswordHash` never leave the server. The business layer never builds HTTP results; only the handler decides status codes.
 
@@ -132,12 +134,12 @@ REQUEST   POST /api/user/books/{bookId}/rent          Authorization: Bearer <jwt
    ├─ routing             → UserEndpoints.RequestRent
    ├─ UseAuthentication   → HttpContext.User { sub, role = User, ... }
    ├─ /api/user gateway   → role User ✓
-   ├─ binding             → bookId from route, ClaimsPrincipal, RentService from DI
+   ├─ binding             → bookId from route, ClaimsPrincipal, IRentService from DI (→ RentService)
    │
 PresentationLayer   RequestRent: userId = user.FindFirstValue("sub")
-BusinessLogicLayer  RentService.RequestRentAsync(userId, bookId)
+BusinessLogicLayer  IRentService.RequestRentAsync(userId, bookId)   (implemented by RentService)
                       book exists? → no duplicate pending? → pending < copies?
-DataAccessLayer     BookRepository.GetBookByIdAsync, RentRepository.HasPendingRentAsync,
+DataAccessLayer     IBookRepository.GetBookByIdAsync, IRentRepository.HasPendingRentAsync,
                     CountPendingRentsForBookAsync, TryAddRentAsync
 PostgreSQL          INSERT INTO "Rents" (...) VALUES (...)
 
@@ -224,7 +226,7 @@ Endpoints are registered on `app` with their full paths (`MapGroup("/api/admin")
 | POST | `/api/auth/login` | Anyone | US-0 | 200 `AuthResponseDto` | 400 validation, 401 bad credentials |
 | POST | `/api/superadmin/admins` | SuperAdmin | US-0 | 201 | 400, 401, 403 |
 | GET | `/api/books` | Anyone | US-1, US-2 | 200 `BookDto[]` | — |
-| POST | `/api/admin/books` | Admin | US-1 | 201 | 400 (validation, duplicate ISBN), 401, 403 |
+| POST | `/api/admin/books` | Admin | US-1 | 201 | 400 (validation, duplicate ISBN), 401, 403, 500 (simultaneous duplicate ISBN, see section 8) |
 | POST | `/api/user/books/{bookId}/rent` | User | US-2 | 201 | 400 (not found, duplicate pending, no copies), 401, 403 |
 | GET | `/api/user/rents` | User | US-4 | 200 `MyRentDto[]` | 401, 403 |
 | GET | `/api/admin/rents/pending` | Admin | US-3 | 200 `PendingRentDto[]` | 401, 403 |
@@ -249,7 +251,7 @@ AspNetUsers 1 ──── * Rents * ──── 1 Books
 |---|---|---|
 | `Id` | uuid | PK |
 | `Name` | varchar(50) | Display name (custom) |
-| `Email` / `UserName` | varchar(256) | Same value; unique (normalized columns indexed) |
+| `Email` / `UserName` | varchar(256) | Same value; `NormalizedUserName` has the unique index, `NormalizedEmail` a non-unique one (Identity also checks email uniqueness before saving) |
 | `PasswordHash`, `SecurityStamp`, `ConcurrencyStamp`, … | | Managed by Identity |
 
 **Books**
@@ -294,7 +296,7 @@ AspNetUsers 1 ──── * Rents * ──── 1 Books
 | Title, author, ISBN, copies required; copies ≥ 1 | `CreateBookDto` annotations |
 | ISBN unique | `BookService` check + unique index on `Books.Isbn` |
 | One pending request per user per book | `RentService` check + filtered unique index |
-| **Request cap (rule B):** a request is refused when `pending requests for the book ≥ CopiesAvailable`. This keeps *pending ≤ copies*, so every pending request can be approved. A rejection frees a slot. | `RentService.RequestRentAsync` |
+| **Request cap (rule B):** a request is refused when `pending requests for the book ≥ CopiesAvailable`. This keeps *pending ≤ copies* unless requests arrive simultaneously (see section 8). A rejection frees a slot. | `RentService.RequestRentAsync` |
 | Approving sets `Approved` and decreases copies by 1; blocked if no copies remain | `RentRepository.ApproveRentAsync` |
 | Rejecting sets `Rejected`; copies unchanged | `RentRepository.RejectRentAsync` |
 | `BookDto.IsAvailable` = a request slot is free (`CopiesAvailable − pending > 0`) — drives the "Request rental" button | `BookService.GetAllBooksAsync` |
@@ -308,6 +310,13 @@ AspNetUsers 1 ──── * Rents * ──── 1 Books
 | Same request approved twice, or approved and rejected at the same time | Atomic conditional update: `UPDATE "Rents" SET "Status" = … WHERE "Id" = @id AND "Status" = 0` (`ExecuteUpdateAsync`); 0 rows changed → "already handled" |
 | Approving with no copies left | Atomic `UPDATE "Books" SET "CopiesAvailable" = "CopiesAvailable" - 1 WHERE "Id" = @id AND "CopiesAvailable" > 0`; status change and decrement run in one transaction, rolled back if either fails |
 | User double-clicks "request" | Filtered unique index; the losing insert is caught (`PostgresErrorCodes.UniqueViolation`) and reported as "already pending" |
+
+### Known gaps
+
+| Scenario | Current behavior |
+|---|---|
+| Same ISBN added by simultaneous requests | The unique index keeps the data correct, but `AddBookAsync` does not catch the violation, so losing requests can get **500** instead of 400 |
+| Different users request the last copy simultaneously | The count and the insert are not atomic, so pending requests can exceed the copies. Approval still cannot take copies below 0; surplus requests cannot be approved |
 
 ---
 
@@ -338,7 +347,9 @@ All Microsoft packages are pinned to 10.0.x (11.x requires .NET 11).
 
 ## 10. Design decisions
 
-- Concrete classes, no interfaces; services and repositories registered with `AddScoped` in `Extensions/ServiceCollectionExtensions.cs` (`AddApplicationServices()`).
+- Dependency inversion for books and rents: endpoints depend on `IBookService` / `IRentService`, and those services depend on `IBookRepository` / `IRentRepository`. Each interface lives in the same project as its implementation.
+- `AuthService` and `TokenService` are concrete classes without interfaces.
+- Services and repositories are registered with `AddScoped` in `Extensions/ServiceCollectionExtensions.cs` (`AddApplicationServices()`), as interface → implementation where an interface exists, e.g. `AddScoped<IBookService, BookService>()`.
 - `Program.cs` stays short: Identity, JWT and application services are each configured in their own extension method under `Extensions/`.
 - Minimal APIs grouped per area instead of controllers; handlers are named static methods in `Endpoints/*`.
 - Role checks are path gateways (`app.Map` branches + `RequireRoleMiddleware`) instead of authorization policies.

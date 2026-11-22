@@ -10,7 +10,7 @@ public static class UserEndpoints
         group.MapGet("/rents", ListMyRents);
     }
 
-    private static async Task<IResult> RequestRent(Guid bookId, ClaimsPrincipal user, RentService rentService)
+    private static async Task<IResult> RequestRent(Guid bookId, ClaimsPrincipal user, IRentService rentService)
     {
         var userId = Guid.Parse(user.FindFirstValue("sub")!);
 
@@ -22,7 +22,7 @@ public static class UserEndpoints
         return Results.Created();
     }
 
-    private static async Task<IResult> ListMyRents(ClaimsPrincipal user, RentService rentService)
+    private static async Task<IResult> ListMyRents(ClaimsPrincipal user, IRentService rentService)
     {
         var userId = Guid.Parse(user.FindFirstValue("sub")!);
 
